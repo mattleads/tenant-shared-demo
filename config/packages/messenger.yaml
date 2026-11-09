@@ -1,0 +1,23 @@
+# The transport keeps its name in both modes. A dedicated deployment reads its own stream
+# (redis://…/tenant-<uuid>); a shared one points the same transport at
+# tenant-multi://<redis host>?kind=main (App\Tenant\Messenger\MultiTenantTransport).
+framework:
+    messenger:
+        failure_transport: failed
+
+        transports:
+            async:
+                dsn: '%env(MESSENGER_TRANSPORT_DSN)%'
+                options:
+                    consumer: '%env(MESSENGER_CONSUMER_NAME)%'
+                    redeliver_timeout: 300
+                    claim_interval: 30000
+                retry_strategy:
+                    max_retries: 2
+                    delay: 1000
+            # doctrine://default lands in the tenant's own database: the failure send happens while the tenant is set.
+            failed: 'doctrine://default?queue_name=failed'
+
+        routing:
+            'App\Message\NoteCreated': async
+            'App\Message\SlowJob': async
