@@ -1,0 +1,82 @@
+# The same shared deployment four ways, for scripts/bench.sh:
+#   docker compose -f compose.yaml -f compose.bench.yaml --profile bench up -d --build
+# Every app container gets the same 4 CPUs and the same 8 PHP threads or processes.
+# PG_SSLMODE=disable skips libpq's SSL negotiation (see scripts/bench.sh and the article, part 2).
+x-app-env: &app-env
+  APP_ENV: prod
+  APP_SECRET: bench-only-not-a-secret
+  TENANT_MODE: multi
+  TENANT_PLACEMENT: shared-1
+  TENANT_INFLIGHT_CAP: 1
+  DATABASE_URL: postgresql://app:app@database:5432/app?serverVersion=16&charset=utf8&sslmode=${PG_SSLMODE:-prefer}
+  REDIS_URL: redis://redis:6379
+  MESSENGER_TRANSPORT_DSN: tenant-multi://redis:6379?kind=main
+  MESSENGER_CONSUMER_NAME: bench
+
+x-app: &app
+  profiles: [bench]
+  depends_on:
+    database:
+      condition: service_healthy
+    redis:
+      condition: service_started
+  deploy:
+    resources:
+      limits:
+        cpus: "4"
+
+services:
+  fpm:
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/fpm/Dockerfile
+    environment:
+      <<: *app-env
+
+  nginx:
+    profiles: [bench]
+    build:
+      context: .
+      dockerfile: docker/nginx/Dockerfile
+    depends_on: [fpm]
+    ports:
+      - "8780:80"
+
+  frankenphp:
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/frankenphp/Dockerfile
+    environment:
+      <<: *app-env
+      FRANKENPHP_CONFIG: num_threads 8
+    ports:
+      - "8781:80"
+
+  frankenphp-worker:
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/frankenphp/Dockerfile
+    environment:
+      <<: *app-env
+      FRANKENPHP_CONFIG: |
+        num_threads 8
+        worker ./public/index.php 8
+    ports:
+      - "8782:80"
+
+  frankenphp-worker-keep:
+    <<: *app
+    build:
+      context: .
+      dockerfile: docker/frankenphp/Dockerfile
+    environment:
+      <<: *app-env
+      DATABASE_URL: postgresql://app:app@database:5432/app?serverVersion=16&charset=utf8&sslmode=${PG_SSLMODE:-prefer}&tenantConnections=16
+      FRANKENPHP_CONFIG: |
+        num_threads 8
+        worker ./public/index.php 8
+    ports:
+      - "8783:80"

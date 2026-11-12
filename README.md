@@ -105,3 +105,23 @@ needs its own copies of these per tenant; the shared one needs one set per place
   `GET` per poll.
 - `migrations/` is generated against tenant `1111…` in single mode and applied to every tenant by
   `app:tenants:migrate`, each in its own process with `TENANT_MODE=single TENANT_UUID=<uuid>`.
+
+## Part 2: FrankenPHP worker mode and kept connections
+
+The companion of the second article, *"One Kernel for Every Tenant: FrankenPHP Worker Mode for Database-per-Tenant
+Symfony 8.1"*. The same code runs under FrankenPHP (`docker/frankenphp/Dockerfile`, classic or worker mode by
+`FRANKENPHP_CONFIG`), with php-fpm behind nginx as the baseline (`docker/fpm`, `docker/nginx`). `symfony/runtime` 8.1
+detects worker mode on its own; no extra package.
+
+`DATABASE_URL=...&tenantConnections=16` makes `TenantConnection` keep up to 16 open connections, one per tenant
+database, instead of closing on every switch. It only pays in a process that lives across requests (FrankenPHP
+worker, Messenger worker); the default of 1 is right for php-fpm.
+
+```
+scripts/bench.sh                      # four deployments, wrk rotating three tenants, results in bench/
+PG_SSLMODE=disable scripts/bench.sh   # same without SSL negotiation on connect
+```
+
+`/whoami` reports `runtime` (`web=1` or `web=1&worker=1`), `connects` (driver connections this thread opened) and
+`open` (databases with an open connection). `tests/TenantConnectionKeepTest.php` covers the kept connections and the
+transaction guard. Results of the run used in the article: `bench/results-2026-11-12-sslmode-prefer.md`.

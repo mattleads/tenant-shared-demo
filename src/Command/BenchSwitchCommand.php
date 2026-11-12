@@ -41,9 +41,9 @@ final class BenchSwitchCommand extends Command
         $this->connection->fetchOne('SELECT 1');
 
         $same = $this->time($rounds, fn () => null);
-        $before = TenantConnection::$reconnects;
+        $before = TenantConnection::$connects;
         $switch = $this->time($rounds, fn (int $i) => TenantContext::set(new Tenant($tenants[$i % count($tenants)])));
-        $reconnects = TenantConnection::$reconnects - $before;
+        $reconnects = TenantConnection::$connects - $before;
         TenantContext::clear();
 
         $output->writeln(sprintf('%d queries on one tenant:            %.3f ms per query', $rounds, $same));

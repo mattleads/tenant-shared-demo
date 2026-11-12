@@ -6,6 +6,7 @@ use App\Entity\Note;
 use App\Message\NoteCreated;
 use App\Message\SlowJob;
 use App\Repository\NoteRepository;
+use App\Tenant\TenantConnection;
 use App\Tenant\TenantContext;
 use Doctrine\DBAL\Connection;
 use Doctrine\ORM\EntityManagerInterface;
@@ -40,6 +41,11 @@ final class NotesController extends AbstractController
             'database' => $connection->fetchOne('SELECT current_database()'),
             'basePath' => $this->container->get('request_stack')->getCurrentRequest()?->getBaseUrl(),
             'notesUrl' => $this->generateUrl('notes_list'),
+            // Which process answered, how it runs, and what its database connection has done so far
+            'pid' => getmypid(),
+            'runtime' => $_SERVER['APP_RUNTIME_MODE'] ?? 'web=1',
+            'connects' => TenantConnection::$connects,
+            'open' => $connection instanceof TenantConnection ? $connection->open() : [],
         ]);
     }
 
