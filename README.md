@@ -125,3 +125,5 @@ PG_SSLMODE=disable scripts/bench.sh   # same without SSL negotiation on connect
 `/whoami` reports `runtime` (`web=1` or `web=1&worker=1`), `connects` (driver connections this thread opened) and
 `open` (databases with an open connection). `tests/TenantConnectionKeepTest.php` covers the kept connections and the
 transaction guard. Results of the run used in the article: `bench/results-2026-11-12-sslmode-prefer.md`.
+
+State that must not outlive a request is cleared on `kernel.terminate`: the tenant context, and a transaction a controller left open by throwing between `beginTransaction()` and `commit()`. Doctrine's reset recreates the entity manager but keeps the connection, so without the rollback the worker's next request would run inside that transaction, or hit the transaction guard when it is for another tenant. The rollback logs a warning; `TwoTenantIsolationTest` covers it with one kernel serving two requests.
