@@ -4,6 +4,8 @@ namespace App\Tests;
 
 use App\Tenant\TenantContext;
 use Symfony\Bundle\FrameworkBundle\Test\WebTestCase;
+use Symfony\Component\HttpKernel\Event\ControllerEvent;
+use Symfony\Component\HttpKernel\KernelEvents;
 
 /**
  * Runs against the real stack in multi mode: Postgres and Redis from compose.yaml, tenants A and B placed on
@@ -50,6 +52,38 @@ final class TwoTenantIsolationTest extends WebTestCase
         self::assertSame('tenant_22222222_2222_4222_8222_222222222222', $data['database']);
         self::assertSame('/tenant_'.self::B, $data['basePath']);
         self::assertSame('/tenant_'.self::B.'/notes', $data['notesUrl']);
+    }
+
+    /**
+     * A worker serves many requests from one kernel. A controller that throws between beginTransaction() and
+     * commit() leaves the transaction open on the connection, Doctrine's reset only clears the entity manager, and
+     * the next request for another tenant would hit TenantConnection's transaction guard. Terminate rolls it back.
+     */
+    public function testATransactionLeftOpenByAFailedRequestIsRolledBackBeforeTheNextOne(): void
+    {
+        $client = static::createClient();
+        $client->disableReboot(); // one kernel for every request, like a FrankenPHP worker
+        $connection = static::getContainer()->get('doctrine.dbal.default_connection');
+        $dispatcher = static::getContainer()->get('event_dispatcher');
+
+        $die = static function (ControllerEvent $event) use ($connection): void {
+            if (!$event->isMainRequest()) {
+                return; // the error page is a sub-request
+            }
+            $connection->beginTransaction();
+            throw new \RuntimeException('controller died inside a transaction');
+        };
+        $dispatcher->addListener(KernelEvents::CONTROLLER, $die);
+        try {
+            $client->request('GET', '/tenant_'.self::A.'/notes');
+        } finally {
+            $dispatcher->removeListener(KernelEvents::CONTROLLER, $die);
+        }
+        self::assertResponseStatusCodeSame(500);
+        self::assertFalse($connection->isTransactionActive(), 'kernel.terminate must roll back what the request left open');
+
+        $client->request('GET', '/tenant_'.self::B.'/notes');
+        self::assertResponseIsSuccessful();
     }
 
     public function testAPathWithoutATenantIsNotServed(): void

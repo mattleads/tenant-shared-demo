@@ -4,6 +4,8 @@ namespace App\Tenant;
 
 use App\Tenant\TenantResolver\MultiTenantResolver;
 use App\Tenant\TenantResolver\TenantMode;
+use Doctrine\DBAL\Connection;
+use Psr\Log\LoggerInterface;
 use Symfony\Component\DependencyInjection\Attribute\Autowire;
 use Symfony\Component\EventDispatcher\Attribute\AsEventListener;
 use Symfony\Component\HttpKernel\Event\RequestEvent;
@@ -27,6 +29,8 @@ final class TenantRequestListener
         #[Autowire('%env(TENANT_MODE)%')]
         string $tenantMode,
         private readonly MultiTenantResolver $resolver,
+        private readonly Connection $connection,
+        private readonly LoggerInterface $logger,
     ) {
         $this->mode = TenantMode::from($tenantMode);
     }
@@ -58,9 +62,24 @@ final class TenantRequestListener
         TenantContext::set($this->resolver->resolve($prefix));
     }
 
+    /**
+     * A long-lived process (FrankenPHP worker) keeps the connection between requests. Doctrine's reset clears the
+     * entity manager but not a transaction a controller left open by throwing between beginTransaction() and
+     * commit(): the next request would run inside it, or hit TenantConnection's transaction guard. Roll it back.
+     */
     #[AsEventListener(event: KernelEvents::TERMINATE)]
     public function onTerminate(TerminateEvent $event): void
     {
+        if ($this->connection->isTransactionActive()) {
+            $this->logger->warning('Rolling back a transaction left open by {method} {path}', [
+                'method' => $event->getRequest()->getMethod(),
+                'path' => $event->getRequest()->getPathInfo(),
+                'tenant' => TenantContext::has() ? TenantContext::current()->uuid : null,
+            ]);
+            while ($this->connection->isTransactionActive()) {
+                $this->connection->rollBack();
+            }
+        }
         TenantContext::clear();
     }
 }
